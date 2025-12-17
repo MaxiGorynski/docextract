@@ -1,0 +1,59 @@
+# ==============================================================================
+# FILE: requirements.txt
+# LOCATION: /docextract/requirements.txt (project root)
+# ==============================================================================
+#
+# PURPOSE:
+#   Python package dependencies for DocExtract. Pinned to minor versions for
+#   reproducibility while allowing patch updates.
+#
+# USAGE:
+#   pip install -r requirements.txt
+#
+# IN DOCKER:
+#   Automatically installed during image build (see Dockerfile)
+#
+# ADDING DEPENDENCIES:
+#   1. Add package with version constraint (e.g., package>=1.0,<2.0)
+#   2. Run: pip install -r requirements.txt
+#   3. Test locally before committing
+#   4. For production, consider generating a lock file with pip-compile
+#
+# ==============================================================================
+
+# Django
+Django>=5.0,<5.1
+djangorestframework>=3.14,<4.0
+django-filter>=24.0,<25.0
+django-cors-headers>=4.3,<5.0
+
+# Database
+psycopg2-binary>=2.9,<3.0
+
+# Celery
+celery>=5.3,<6.0
+redis>=5.0,<6.0
+
+# File handling
+python-magic>=0.4,<0.5
+
+# Environment
+python-dotenv>=1.0,<2.0
+
+# Production server
+gunicorn>=21.0,<23.0
+
+# Development
+pytest>=8.0,<9.0
+pytest-django>=4.8,<5.0
+pytest-cov>=4.1,<5.0
+factory-boy>=3.3,<4.0
+
+# Code quality
+black>=24.0,<25.0
+ruff>=0.3,<1.0
+
+# AI Integration
+openai>=1.0,<2.0
+PyPDF2>=3.0,<4.0
+python-docx>=1.0,<2.0

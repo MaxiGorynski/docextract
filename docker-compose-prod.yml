@@ -1,0 +1,270 @@
+# ==============================================================================
+# FILE: docker-compose.prod.yml
+# LOCATION: /docextract/docker-compose.prod.yml (project root)
+# ==============================================================================
+#
+# PURPOSE:
+#   Production Docker Compose configuration for DocExtract. Orchestrates all
+#   services with security hardening, health checks, and proper resource limits.
+#
+# ARCHITECTURE:
+#   ┌─────────────────────────────────────────────────────────────┐
+#   │                      Docker Network                         │
+#   │                                                             │
+#   │   Internet ──▶ Nginx (:80/:443) ──▶ Django (Gunicorn)       │
+#   │                  │                        │                 │
+#   │                  │                        ▼                 │
+#   │            static/media              PostgreSQL             │
+#   │                                          │                  │
+#   │                                          ▼                  │
+#   │                                    Redis ◀── Celery         │
+#   │                                                             │
+#   └─────────────────────────────────────────────────────────────┘
+#
+# SERVICES:
+#   web           - Django application (Gunicorn WSGI server)
+#   celery_worker - Async task processing (extractions, etc.)
+#   celery_beat   - Scheduled task scheduler
+#   db            - PostgreSQL 16 database
+#   redis         - Celery broker and Django cache
+#   nginx         - Reverse proxy, static files, SSL termination
+#
+# USAGE:
+#   Initial deployment:
+#       docker compose -f docker-compose.prod.yml up -d --build
+#
+#   View logs:
+#       docker compose -f docker-compose.prod.yml logs -f web
+#
+#   Run migrations:
+#       docker compose -f docker-compose.prod.yml exec web python manage.py migrate
+#
+#   Create superuser:
+#       docker compose -f docker-compose.prod.yml exec web python manage.py createsuperuser
+#
+#   Stop services:
+#       docker compose -f docker-compose.prod.yml down
+#
+# VOLUMES:
+#   postgres_data  - Database persistence (CRITICAL - back up regularly)
+#   redis_data     - Redis AOF persistence
+#   static_volume  - Collected static files (shared with Nginx)
+#   media_volume   - User uploads (shared with Nginx)
+#
+# PORTS EXPOSED:
+#   80  - HTTP (redirects to HTTPS, serves ACME challenges)
+#   443 - HTTPS (main application)
+#
+# SECURITY NOTES:
+#   - Database and Redis are NOT exposed externally
+#   - All services run as non-root users where possible
+#   - Secrets loaded from .env file (never commit .env to git)
+#   - Health checks ensure service availability
+#
+# SSL/TLS SETUP:
+#   1. First run: Start with HTTP only to get Certbot certificates
+#   2. Run certbot: See docs/DEPLOYMENT.md for instructions
+#   3. Restart nginx to enable HTTPS
+#
+# SCALING:
+#   - Celery workers: docker compose -f docker-compose.prod.yml up -d --scale celery_worker=3
+#   - Gunicorn workers: Adjust --workers in web command (CPU cores * 2 + 1)
+#
+# RESOURCE LIMITS:
+#   Configured for Hetzner CX21 (2 vCPU, 4GB RAM):
+#   - web: ~1GB RAM limit
+#   - celery_worker: ~512MB per worker
+#   - db: ~1GB RAM limit
+#   - redis: 256MB max memory
+#
+# ==============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Django Application Server
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: >
+      gunicorn config.wsgi:application
+      --bind 0.0.0.0:8000
+      --workers 3
+      --threads 2
+      --worker-class gthread
+      --timeout 120
+      --access-logfile -
+      --error-logfile -
+      --capture-output
+    volumes:
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.production
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - docextract_network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # ---------------------------------------------------------------------------
+  # Celery Worker - Async Task Processing
+  # ---------------------------------------------------------------------------
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: celery -A config worker -l info -c 2
+    volumes:
+      - media_volume:/app/media
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.production
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - docextract_network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ---------------------------------------------------------------------------
+  # Celery Beat - Scheduled Tasks
+  # ---------------------------------------------------------------------------
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: celery -A config beat -l info
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.production
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - docextract_network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Database
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    restart: unless-stopped
+    networks:
+      - docextract_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # ---------------------------------------------------------------------------
+  # Redis - Celery Broker & Cache
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - docextract_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Nginx - Reverse Proxy & Static Files
+  # ---------------------------------------------------------------------------
+  nginx:
+    image: nginx:1.25-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - static_volume:/app/staticfiles:ro
+      - media_volume:/app/media:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+    depends_on:
+      - web
+    restart: unless-stopped
+    networks:
+      - docextract_network
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  # Database storage - CRITICAL: Back up regularly
+  postgres_data:
+    driver: local
+
+  # Redis persistence
+  redis_data:
+    driver: local
+
+  # Django static files (CSS, JS, admin assets)
+  static_volume:
+    driver: local
+
+  # User-uploaded documents
+  media_volume:
+    driver: local
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  docextract_network:
+    driver: bridge

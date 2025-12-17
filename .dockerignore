@@ -1,0 +1,70 @@
+# ==============================================================================
+# FILE: .dockerignore
+# LOCATION: /docextract/.dockerignore (project root)
+# ==============================================================================
+#
+# PURPOSE:
+#   Excludes files from Docker build context, reducing build time and image
+#   size. Similar to .gitignore but for Docker.
+#
+# IMPACT:
+#   - Faster builds (smaller context to send to Docker daemon)
+#   - Smaller images (excluded files not available in container)
+#   - Security (prevents secrets from being copied into images)
+#
+# ==============================================================================
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv
+ENV
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Testing
+.coverage
+htmlcov
+.pytest_cache
+.tox
+
+# Documentation (not needed in runtime image)
+docs/
+
+# Build artifacts
+*.egg-info
+dist
+build
+
+# Local development
+*.log
+*.sqlite3
+media/*
+staticfiles/*
+
+# Docker
+Dockerfile*
+docker-compose*
+.docker
+
+# Misc
+*.md
+!README.md
+Makefile

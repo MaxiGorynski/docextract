@@ -1,0 +1,147 @@
+# ==============================================================================
+# FILE: docker-compose.yml
+# LOCATION: /docextract/docker-compose.yml (project root)
+# ==============================================================================
+#
+# PURPOSE:
+#   Docker Compose configuration for local development. Orchestrates all
+#   services needed to run DocExtract locally.
+#
+# SERVICES:
+#   web     - Django application (runserver for dev)
+#   celery  - Celery worker for async tasks
+#   db      - PostgreSQL 16 database
+#   redis   - Redis for Celery broker and caching
+#
+# USAGE:
+#   Start all services:
+#       docker-compose up
+#
+#   Start in background:
+#       docker-compose up -d
+#
+#   View logs:
+#       docker-compose logs -f web
+#
+#   Run management commands:
+#       docker-compose exec web python manage.py migrate
+#       docker-compose exec web python manage.py createsuperuser
+#
+#   Stop services:
+#       docker-compose down
+#
+#   Reset everything (including data):
+#       docker-compose down -v
+#
+# VOLUMES:
+#   postgres_data - Persists database between container restarts
+#   redis_data    - Persists Redis data (optional, for durability)
+#   media_data    - Persists uploaded files
+#
+# PORTS:
+#   8000 - Django web server
+#   5432 - PostgreSQL (for direct access with psql/pgAdmin)
+#   6379 - Redis (for redis-cli debugging)
+#
+# HEALTH CHECKS:
+#   db and redis have health checks. The web service waits for them
+#   to be healthy before starting (depends_on: condition: service_healthy)
+#
+# ENVIRONMENT:
+#   All services use development settings. Credentials are hardcoded
+#   for convenience (docextract/docextract/docextract).
+#   OPENAI_API_KEY loaded from .env file for AI extraction.
+#
+# PRODUCTION NOTE:
+#   This file is for DEVELOPMENT ONLY. Production uses a separate
+#   docker-compose.prod.yml with:
+#   - Gunicorn instead of runserver
+#   - Nginx reverse proxy
+#   - Secure credentials from environment
+#   - No exposed database ports
+#
+# PERFORMANCE NOTES:
+#   - Volume mounts (.) enable live code reload
+#   - PostgreSQL and Redis use Alpine images for smaller size
+#   - Celery runs single worker; scale with --scale celery=N
+#
+# ==============================================================================
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+      - media_data:/app/media
+    ports:
+      - "8000:8000"
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.development
+      - POSTGRES_DB=docextract
+      - POSTGRES_USER=docextract
+      - POSTGRES_PASSWORD=docextract
+      - POSTGRES_HOST=db
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: celery -A config worker -l info
+    volumes:
+      - .:/app
+      - media_data:/app/media
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.development
+      - POSTGRES_DB=docextract
+      - POSTGRES_USER=docextract
+      - POSTGRES_PASSWORD=docextract
+      - POSTGRES_HOST=db
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      - db
+      - redis
+
+  db:
+    image: postgres:16-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=docextract
+      - POSTGRES_USER=docextract
+      - POSTGRES_PASSWORD=docextract
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docextract -d docextract"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:
+  media_data:
