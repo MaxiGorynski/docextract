@@ -231,6 +231,7 @@ services:
       - media_volume:/app/media:ro
       - ./certbot/conf:/etc/letsencrypt:ro
       - ./certbot/www:/var/www/certbot:ro
+      - ./frontend/dist:/app/frontend/dist:ro
     depends_on:
       - web
     restart: unless-stopped
