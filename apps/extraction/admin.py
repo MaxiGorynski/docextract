@@ -589,9 +589,9 @@ class ExtractedFieldAdmin(admin.ModelAdmin):
             colour = "#dc3545"
 
         return format_html(
-            '<span style="color: {}; font-weight: bold;">{:.0%}</span>',
+            '<span style="color: {}; font-weight: bold;">{}%</span>',
             colour,
-            confidence,
+            int(confidence * 100),
         )
 
     @admin.display(description="Active")
